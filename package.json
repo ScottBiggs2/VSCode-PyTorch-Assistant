@@ -1,0 +1,79 @@
+{
+  "name": "pytorch-dev-helper",
+  "displayName": "PyTorch Dev Helper",
+  "description": "Advanced PyTorch development assistant",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onCommand:pytorch-helper.runPython",
+    "onCommand:pytorch-helper.quickFix",
+    "onCommand:pytorch-helper.chat"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "pytorch-helper.runPython",
+        "title": "Check PyTorch Code",
+        "category": "PyTorch"
+      },
+      {
+        "command": "pytorch-helper.quickFix",
+        "title": "PyTorch Quick Fix",
+        "category": "PyTorch"
+      },
+      {
+        "command": "pytorch-helper.chat",
+        "title": "PyTorch Chat",
+        "category": "PyTorch"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "pytorch-helper.chat",
+          "when": "editorLangId == python"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "pytorch-helper.chat",
+          "group": "pytorch@1",
+          "when": "editorLangId == python"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/python-shell": "^0.4.2",
+    "@types/vscode": "^1.101.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@vscode/python-extension": "^1.0.5",
+    "python-shell": "^5.0.0"
+  }
+}
