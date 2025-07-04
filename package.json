@@ -15,7 +15,8 @@
     "onLanguage:python",
     "onCommand:pytorch-helper.runPython",
     "onCommand:pytorch-helper.quickFix",
-    "onCommand:pytorch-helper.chat"
+    "onCommand:pytorch-helper.chat",
+    "onView:pytorch-helper.chatView"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -34,6 +35,11 @@
         "command": "pytorch-helper.chat",
         "title": "PyTorch Chat",
         "category": "PyTorch"
+      },
+      {
+        "command": "pytorch-helper.insertCode",
+        "title": "Insert Generated Code",
+        "category": "PyTorch"
       }
     ],
     "menus": {
@@ -48,6 +54,15 @@
           "command": "pytorch-helper.chat",
           "group": "pytorch@1",
           "when": "editorLangId == python"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "pytorch-helper.chatView",
+          "name": "PyTorch Assistant",
+          "when": "resourceLangId == python"
         }
       ]
     }
