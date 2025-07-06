@@ -12,15 +12,22 @@
     "Machine Learning"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onLanguage:python",
     "onCommand:pytorch-helper.runPython",
     "onCommand:pytorch-helper.quickFix",
     "onCommand:pytorch-helper.chat",
     "onView:pytorch-helper.chatView"
+
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+      "command": "pytorch-helper.openChat",
+      "title": "Open PyTorch Chat",
+      "category": "PyTorch"
+      },
       {
         "command": "pytorch-helper.runPython",
         "title": "Check PyTorch Code",
@@ -62,10 +69,26 @@
         {
           "id": "pytorch-helper.chatView",
           "name": "PyTorch Assistant",
-          "when": "resourceLangId == python"
+          "when": "resourceLangId == python",
+          "icon": "src/media/icon.png"
         }
       ]
+    },
+    "viewsWelcome": [
+    {
+      "view": "pytorch-helper.chatView",
+      "contents": "Welcome to PyTorch Assistant!\n\n[Open Chat Panel](command:pytorch-helper.focusChat)\n[Run Analysis](command:pytorch-helper.runPython)"
     }
+  ]
+  },
+  "viewsContainers": {
+    "icon": "src/media/icon.png",
+    "activitybar": [
+      {
+        "id": "pytorch-helper.chatView",
+        "name": "PyTorch Chat"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -92,3 +115,4 @@
     "python-shell": "^5.0.0"
   }
 }
+

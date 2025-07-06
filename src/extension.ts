@@ -246,6 +246,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// ======================
 	// 9. Chat Panel Implementation
 	// ======================
+
 	class PyTorchChatProvider implements vscode.WebviewViewProvider {
 		public static readonly viewType = 'pytorch-helper.chatView';
 		private _view?: vscode.WebviewView;
@@ -266,7 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
 				localResourceRoots: [this._context.extensionUri]
 			};
 
-			webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+			webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
 
 			webviewView.webview.onDidReceiveMessage(async data => {
 				switch (data.type) {
@@ -413,11 +414,11 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			}).join('');
 
-			const html = this._getHtmlForWebview(this._view.webview, messages);
+			const html = this.getHtmlForWebview(this._view.webview, messages);
 			this._view.webview.html = html;
 		}
 
-		private _getHtmlForWebview(webview: vscode.Webview, messages = ''): string {
+		public getHtmlForWebview(webview: vscode.Webview, messages = ''): string {
 			const styleUri = webview.asWebviewUri(
 				vscode.Uri.joinPath(this._context.extensionUri, 'media', 'chat.css')
 			);
@@ -449,16 +450,25 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
+
 	// ======================
 	// 11. Register Chat Panel
 	// ======================
-	const chatProvider = new PyTorchChatProvider(context);
-	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(
-			PyTorchChatProvider.viewType,
-			chatProvider
-		)
-	);
+    const chatProvider = new PyTorchChatProvider(context);
+    vscode.commands.registerCommand('pytorch-helper.openChat', () => {
+        const panel = vscode.window.createWebviewPanel('pytorch-helper.chatView', 'PyTorch Chat', vscode.ViewColumn.One);
+        panel.webview.html = chatProvider.getHtmlForWebview(panel.webview);
+    });
+
+    vscode.commands.executeCommand('pytorch-helper.openChat');
+
+    // vscode.window.registerViewContainer('pytorch-helper.chatView', {
+    // showOptions: {
+    //   openToSide: true,
+    //   preserveFocus: true,
+    // },
+    // });
+
 
     // ======================
     // 9. Register All Commands

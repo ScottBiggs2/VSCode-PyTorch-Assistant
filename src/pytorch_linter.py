@@ -40,16 +40,17 @@ class CodeAnalyzer(ast.NodeVisitor):
         return False
 
 def handle_chat_request(user_input: str, code: str) -> str:
-    # Determine if we should use Qwen or DeepSeek
-    use_qwen = any(keyword in user_input.lower() for keyword in 
-                  ['explain', 'why', 'what', 'how', 'should', '?'])
-    
-    model = "qwen2.5:3b" if use_qwen else "deepseek-coder:1.3B"
-    llm = Ollama(model=model)
-    
-    # System prompt for Qwen (explanations)
-    if use_qwen:
-        system_prompt = f"""### Role: PyTorch Expert Assistant
+    try:
+        # Determine if we should use Qwen or DeepSeek
+        use_qwen = any(keyword in user_input.lower() for keyword in 
+                      ['explain', 'why', 'what', 'how', 'should', '?'])
+        
+        model = "qwen2.5:3b" if use_qwen else "deepseek-coder:1.3B"
+        llm = Ollama(model=model)
+        
+        # System prompt for Qwen (explanations)
+        if use_qwen:
+            system_prompt = f"""### Role: PyTorch Expert Assistant
 ### Task: Provide detailed explanation
 ### User Question: {user_input}
 ### Code Context:
@@ -60,10 +61,10 @@ def handle_chat_request(user_input: str, code: str) -> str:
 2. Compare alternatives
 3. Provide best practices
 4. Use bullet points for clarity"""
-        return llm.invoke(system_prompt)
-    
-    # System prompt for DeepSeek (code generation)
-    system_prompt = f"""### Role: PyTorch Coding Assistant
+            return llm.invoke(system_prompt)
+        
+        # System prompt for DeepSeek (code generation)
+        system_prompt = f"""### Role: PyTorch Coding Assistant
 ### Task: Generate code for request
 ### User Request: {user_input}
 ### Code Context:
@@ -73,17 +74,12 @@ def handle_chat_request(user_input: str, code: str) -> str:
 1. Return complete, runnable code blocks
 2. Wrap code in triple backticks
 3. Include comments for key steps
-4. Maintain existing code style
+4. Maintain existing code style"""
+        return llm.invoke(system_prompt)
+    
+    except Exception as e:
+        return f"❌ Error processing request: {str(e)}"
 
-### Example Response:
-Here's the implementation:
-```python
-# Training loop implementation
-for epoch in range(epochs):
-    # Forward pass
-    outputs = model(inputs)
-```"""
-    return llm.invoke(system_prompt)
 
 def analyze_file(file_path: str) -> str:
     with open(file_path, 'r') as f:
