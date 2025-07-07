@@ -229,6 +229,14 @@ export function activate(context: vscode.ExtensionContext) {
 						this._conversation = [];
 						this._updateWebview();
 						break;
+					case 'insertCode':
+						const editor = vscode.window.activeTextEditor;
+						if (editor) {
+							editor.edit(editBuilder => {
+								editBuilder.insert(editor.selection.active, data.code);
+							});
+						}
+						break;
 				}
 			});
 		}
@@ -355,9 +363,27 @@ export function activate(context: vscode.ExtensionContext) {
 					</div>`;
 				}
 
-				let contentHtml = escapeHtml(msg.content)
-					.replace(/```python\n([\s\S]*?)```/g, (match, code) => `<div class="code-block"><pre><code>${code}</code></pre></div>`)
-					.replace(/```\n([\s\S]*?)```/g, (match, code) => `<div class="code-block"><pre><code>${code}</code></pre></div>`);
+				let contentHtml = '';
+				if (msg.role === 'user') {
+					contentHtml = escapeHtml(msg.content);
+				} else {
+					// Process assistant messages for code blocks, escaping non-code content
+					// and adding an "Insert Code" button to each block.
+					const codeBlockRegex = /(```(?:python\n)?[\s\S]*?```)/g;
+					const parts = msg.content.split(codeBlockRegex);
+
+					contentHtml = parts.map(part => {
+						const codeMatch = part.match(/```(python\n)?([\s\S]*?)```/);
+						if (codeMatch && codeMatch[2]) {
+							const code = codeMatch[2].trim();
+							return `<div class="code-block">
+										<pre><code>${escapeHtml(code)}</code></pre>
+										<button class="insert-code-btn">Insert Code</button>
+									</div>`;
+						}
+						return escapeHtml(part);
+					}).join('');
+				}
 
 				return `<div class="message ${roleClass}">
 					<div class="avatar">${avatar}</div>

@@ -13,7 +13,7 @@ This extension offers a suite of tools designed to streamline the PyTorch develo
 ### 🤖 AI-Powered Chat Assistant
 - **Context-Aware Help**: Open a Python file and ask questions. The assistant uses the content of your active editor as context for its answers.
 - **Dual-LLM Strategy**: Utilizes `Qwen` for explanations and conceptual questions, and `DeepSeek Coder` for code generation and modification tasks.
-- **Interactive Code Blocks**: AI-generated code snippets come with an "Insert Code" button, allowing you to apply suggestions directly into your editor with a single click.
+- **Interactive Code Blocks [coming soon]**: AI-generated code snippets come with an "Insert Code" button, allowing you to apply suggestions directly into your editor with a single click.
 - **Responsive UI**: The chat interface provides loading indicators and disables input while the assistant is "thinking", ensuring a smooth user experience.
 
 ### 💡 Smart Linter & Quick Fixes
