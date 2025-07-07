@@ -14,20 +14,11 @@
   "activationEvents": [
     "onStartupFinished",
     "onLanguage:python",
-    "onCommand:pytorch-helper.runPython",
-    "onCommand:pytorch-helper.quickFix",
-    "onCommand:pytorch-helper.chat",
-    "onView:pytorch-helper.chatView"
-
+    "onView:pytorch-assistant.chat"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
-      {
-      "command": "pytorch-helper.openChat",
-      "title": "Open PyTorch Chat",
-      "category": "PyTorch"
-      },
       {
         "command": "pytorch-helper.runPython",
         "title": "Check PyTorch Code",
@@ -39,57 +30,52 @@
         "category": "PyTorch"
       },
       {
-        "command": "pytorch-helper.chat",
-        "title": "PyTorch Chat",
-        "category": "PyTorch"
-      },
-      {
         "command": "pytorch-helper.insertCode",
         "title": "Insert Generated Code",
         "category": "PyTorch"
       }
     ],
     "menus": {
-      "commandPalette": [
+      "view/title": [
         {
-          "command": "pytorch-helper.chat",
-          "when": "editorLangId == python"
+          "command": "pytorch-helper.runPython",
+          "when": "view == pytorch-assistant.chat",
+          "group": "navigation"
         }
       ],
-      "editor/context": [
+      "commandPalette": [
         {
-          "command": "pytorch-helper.chat",
-          "group": "pytorch@1",
+          "command": "pytorch-helper.runPython",
           "when": "editorLangId == python"
         }
       ]
     },
-    "views": {
-      "explorer": [
+    "viewsContainers": {
+      "activitybar": [
         {
-          "id": "pytorch-helper.chatView",
-          "name": "PyTorch Assistant",
-          "when": "resourceLangId == python",
+          "id": "pytorch-assistant",
+          "title": "PyTorch Assistant",
           "icon": "src/media/icon.png"
         }
       ]
     },
+    "views": {
+      "pytorch-assistant": [
+        {
+          "id": "pytorch-assistant.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "viewsWelcome": [
-    {
-      "view": "pytorch-helper.chatView",
-      "contents": "Welcome to PyTorch Assistant!\n\n[Open Chat Panel](command:pytorch-helper.focusChat)\n[Run Analysis](command:pytorch-helper.runPython)"
-    }
-  ]
-  },
-  "viewsContainers": {
-    "icon": "src/media/icon.png",
-    "activitybar": [
       {
-        "id": "pytorch-helper.chatView",
-        "name": "PyTorch Chat"
+        "view": "pytorch-assistant.chat",
+        "contents": "Welcome to PyTorch Assistant!\n\n[Run Analysis on active file](command:pytorch-helper.runPython)"
       }
     ]
   },
+
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
@@ -115,4 +101,3 @@
     "python-shell": "^5.0.0"
   }
 }
-

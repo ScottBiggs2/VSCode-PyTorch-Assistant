@@ -67,55 +67,6 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // ======================
-    // 5. Chat Command
-    // ======================
-    const chatDisposable = vscode.commands.registerCommand('pytorch-helper.chat', async () => {
-        const prompt = await vscode.window.showInputBox({
-            prompt: 'What PyTorch change would you like to make?',
-            placeHolder: 'e.g. "Add batch normalization after conv layers"'
-        });
-        if (!prompt) return;
-
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) return;
-
-        const tempFile = path.join(os.tmpdir(), `pytorch_chat_${Date.now()}.py`);
-        fs.writeFileSync(tempFile, editor.document.getText());
-
-        outputChannel.clear();
-        outputChannel.appendLine(`Processing chat request: ${prompt}`);
-
-        const scriptPath = path.join(context.extensionPath, 'src', 'pytorch_linter.py');
-        const pyshell = new PythonShell(scriptPath, {
-            args: [tempFile, '--chat', prompt],
-            pythonOptions: ['-u'],
-            pythonPath: 'python3'
-        });
-
-        const suggestions: CodeSuggestion[] = [];
-
-        pyshell.on('message', (message: string) => {
-            outputChannel.appendLine(message);
-            const suggestion = parseSuggestion(message);
-            if (suggestion) {
-                suggestions.push(suggestion);
-            }
-        });
-
-        pyshell.end((err) => {
-            fs.unlinkSync(tempFile);
-            if (err) {
-                outputChannel.appendLine(`Error: ${err.message}`);
-                vscode.window.showErrorMessage('Chat request failed');
-            }
-            if (suggestions.length > 0) {
-                showInlineSuggestions(editor, suggestions);
-            }
-            outputChannel.show();
-        });
-    });
-
-    // ======================
     // 6. Enhanced Linter Command
     // ======================
     const linterDisposable = vscode.commands.registerCommand('pytorch-helper.runPython', () => {
@@ -248,7 +199,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// ======================
 
 	class PyTorchChatProvider implements vscode.WebviewViewProvider {
-		public static readonly viewType = 'pytorch-helper.chatView';
+		public static readonly viewType = 'pytorch-assistant.chat';
 		private _view?: vscode.WebviewView;
 		private _conversation: { role: string; content: string }[] = [];
 		private _pendingResponse = false;
@@ -274,9 +225,6 @@ export function activate(context: vscode.ExtensionContext) {
 					case 'sendMessage':
 						await this._handleUserMessage(data.message);
 						break;
-					case 'insertCode':
-						this._insertCode(data.code);
-						break;
 					case 'clearChat':
 						this._conversation = [];
 						this._updateWebview();
@@ -295,22 +243,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 			try {
 				const editor = vscode.window.activeTextEditor;
-				if (!editor) {
+				if (!editor || editor.document.languageId !== 'python') {
 					this._conversation.push({ 
 						role: 'assistant', 
-						content: '⚠️ No active PyTorch file found. Open a Python file to continue.' 
+						content: '⚠️ Please open a Python file to use the chat.' 
 					});
 					return;
 				}
 
 				const code = editor.document.getText();
 				const response = await this._getLLMResponse(message, code);
-				
-				// Extract code blocks from response
-				const codeBlocks = this._extractCodeBlocks(response);
-				const formattedResponse = this._formatResponse(response, codeBlocks);
-				
-				this._conversation.push({ role: 'assistant', content: formattedResponse });
+				this._conversation.push({ role: 'assistant', content: response });
 			} catch (error) {
 				this._conversation.push({ 
 					role: 'assistant', 
@@ -344,56 +287,9 @@ export function activate(context: vscode.ExtensionContext) {
 					if (err) {
 						reject(err);
 					} else {
-						resolve(response);
+						resolve(response.trim());
 					}
 				});
-			});
-		}
-
-		private _extractCodeBlocks(response: string): string[] {
-			const codeBlocks: string[] = [];
-			const codeBlockRegex = /```(?:python)?\n([\s\S]*?)\n```/g;
-			let match;
-			
-			while ((match = codeBlockRegex.exec(response)) !== null) {
-				codeBlocks.push(match[1]);
-			}
-			
-			return codeBlocks;
-		}
-
-		private _formatResponse(response: string, codeBlocks: string[]): string {
-			// Replace code blocks with placeholders
-			let formatted = response;
-			const codeBlockRegex = /```(?:python)?\n([\s\S]*?)\n```/g;
-			
-			let blockIndex = 0;
-			formatted = formatted.replace(codeBlockRegex, () => {
-				return `\n\n**CODE BLOCK ${blockIndex++}**\n\n`;
-			});
-
-			// Add insert buttons for each code block
-			codeBlocks.forEach((code, index) => {
-				formatted += `\n\n<div class="code-block">
-					<button data-index="${index}">Insert Code Block ${index + 1}</button>
-					<pre><code>${code}</code></pre>
-				</div>`;
-			});
-
-			return formatted;
-		}
-
-		private _insertCode(code: string) {
-			const editor = vscode.window.activeTextEditor;
-			if (!editor) return;
-
-			const selection = editor.selection;
-			const position = selection.active;
-
-			editor.edit(editBuilder => {
-				editBuilder.insert(position, code);
-			}).then(() => {
-				vscode.commands.executeCommand('editor.action.formatDocument');
 			});
 		}
 
@@ -452,31 +348,20 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 	// ======================
-	// 11. Register Chat Panel
+	// 9. Register Chat Panel
 	// ======================
     const chatProvider = new PyTorchChatProvider(context);
-    vscode.commands.registerCommand('pytorch-helper.openChat', () => {
-        const panel = vscode.window.createWebviewPanel('pytorch-helper.chatView', 'PyTorch Chat', vscode.ViewColumn.One);
-        panel.webview.html = chatProvider.getHtmlForWebview(panel.webview);
-    });
-
-    vscode.commands.executeCommand('pytorch-helper.openChat');
-
-    // vscode.window.registerViewContainer('pytorch-helper.chatView', {
-    // showOptions: {
-    //   openToSide: true,
-    //   preserveFocus: true,
-    // },
-    // });
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(PyTorchChatProvider.viewType, chatProvider)
+	);
 
 
     // ======================
-    // 9. Register All Commands
+    // 10. Register All Commands
     // ======================
     context.subscriptions.push(
         linterDisposable,
-        quickFixDisposable,
-        chatDisposable
+        quickFixDisposable
     );
 }
 
