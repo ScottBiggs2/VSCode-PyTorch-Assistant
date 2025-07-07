@@ -201,7 +201,7 @@ export function activate(context: vscode.ExtensionContext) {
 	class PyTorchChatProvider implements vscode.WebviewViewProvider {
 		public static readonly viewType = 'pytorch-assistant.chat';
 		private _view?: vscode.WebviewView;
-		private _conversation: { role: string; content: string }[] = [];
+		private _conversation: { role: string; content: string, isLoading?: boolean }[] = [];
 		private _pendingResponse = false;
 
 		constructor(private readonly _context: vscode.ExtensionContext) {}
@@ -239,22 +239,33 @@ export function activate(context: vscode.ExtensionContext) {
 			
 			this._pendingResponse = true;
 			this._conversation.push({ role: 'user', content: message });
+			this._conversation.push({ role: 'assistant', content: 'One moment...', isLoading: true });
 			this._updateWebview();
 
 			try {
 				const editor = vscode.window.activeTextEditor;
 				if (!editor || editor.document.languageId !== 'python') {
+					this._conversation.pop(); // remove loading message
 					this._conversation.push({ 
 						role: 'assistant', 
 						content: '⚠️ Please open a Python file to use the chat.' 
 					});
+					this._pendingResponse = false;
+					this._updateWebview();
 					return;
 				}
 
 				const code = editor.document.getText();
 				const response = await this._getLLMResponse(message, code);
+
+				// Replace loading message with actual response
+				const lastMessage = this._conversation[this._conversation.length - 1];
+				if (lastMessage && lastMessage.isLoading) {
+					this._conversation.pop();
+				}
 				this._conversation.push({ role: 'assistant', content: response });
 			} catch (error) {
+				this._conversation.pop(); // remove loading message
 				this._conversation.push({ 
 					role: 'assistant', 
 					content: `❌ Error: ${(error as Error).message}` 
@@ -267,10 +278,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 		private async _getLLMResponse(message: string, code: string): Promise<string> {
 			return new Promise((resolve, reject) => {
+				const outputChannel = vscode.window.createOutputChannel('PyTorch Helper Chat', { log: true });
 				const tempFile = path.join(os.tmpdir(), `pytorch_chat_${Date.now()}.py`);
 				fs.writeFileSync(tempFile, code);
 
 				const scriptPath = path.join(this._context.extensionPath, 'src', 'pytorch_linter.py');
+				outputChannel.info(`Running python-shell with script: ${scriptPath}`);
+				outputChannel.info(`Args: [${tempFile}, --chat, "${message}"]`);
+
 				const pyshell = new PythonShell(scriptPath, {
 					args: [tempFile, '--chat', message],
 					pythonOptions: ['-u'],
@@ -285,8 +300,10 @@ export function activate(context: vscode.ExtensionContext) {
 				pyshell.end((err) => {
 					fs.unlinkSync(tempFile);
 					if (err) {
+						outputChannel.error(`Python script error: ${err.stack || err.message}`);
 						reject(err);
 					} else {
+						outputChannel.info(`Python script response: ${response}`);
 						resolve(response.trim());
 					}
 				});
@@ -294,34 +311,52 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 
 		private _updateWebview() {
-			if (!this._view) return;
-
-			const messages = this._conversation.map(msg => {
-				if (msg.role === 'user') {
-					return `<div class="message user-message">
-						<div class="avatar">👤</div>
-						<div class="content">${msg.content}</div>
-					</div>`;
-				} else {
-					return `<div class="message assistant-message">
-						<div class="avatar">🤖</div>
-						<div class="content">${msg.content}</div>
-					</div>`;
-				}
-			}).join('');
-
-			const html = this.getHtmlForWebview(this._view.webview, messages);
-			this._view.webview.html = html;
+			if (this._view) {
+				this._view.webview.html = this.getHtmlForWebview(this._view.webview);
+			}
 		}
 
-		public getHtmlForWebview(webview: vscode.Webview, messages = ''): string {
+		public getHtmlForWebview(webview: vscode.Webview): string {
 			const styleUri = webview.asWebviewUri(
-				vscode.Uri.joinPath(this._context.extensionUri, 'media', 'chat.css')
+				vscode.Uri.joinPath(this._context.extensionUri, 'src', 'media', 'chat.css')
+			);
+			const scriptUri = webview.asWebviewUri(
+				vscode.Uri.joinPath(this._context.extensionUri, 'src', 'media', 'chat.js')
 			);
 
-			const scriptUri = webview.asWebviewUri(
-				vscode.Uri.joinPath(this._context.extensionUri, 'media', 'chat.js')
-			);
+			const escapeHtml = (unsafe: string) =>
+				unsafe
+					.replace(/&/g, "&amp;")
+					.replace(/</g, "&lt;")
+					.replace(/>/g, "&gt;")
+					.replace(/"/g, "&quot;")
+					.replace(/'/g, "&#039;");
+
+			const messages = this._conversation.map(msg => {
+				const roleClass = msg.role === 'user' ? 'user-message' : 'assistant-message';
+				const avatar = msg.role === 'user' ? '👤' : '🤖';
+				
+				if (msg.isLoading) {
+					return `<div class="message assistant-message loading">
+						<div class="avatar">🤖</div>
+						<div class="content">
+							${escapeHtml(msg.content)}
+							<div class="loading-indicator"><span></span><span></span><span></span></div>
+						</div>
+					</div>`;
+				}
+
+				let contentHtml = escapeHtml(msg.content)
+					.replace(/```python\n([\s\S]*?)```/g, (match, code) => `<div class="code-block"><pre><code>${code}</code></pre></div>`)
+					.replace(/```\n([\s\S]*?)```/g, (match, code) => `<div class="code-block"><pre><code>${code}</code></pre></div>`);
+
+				return `<div class="message ${roleClass}">
+					<div class="avatar">${avatar}</div>
+					<div class="content">${contentHtml}</div>
+				</div>`;
+			}).join('');
+
+			const isDisabled = this._pendingResponse ? 'disabled' : '';
 
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -335,9 +370,9 @@ export function activate(context: vscode.ExtensionContext) {
 				<div class="chat-container">
 					<div class="messages">${messages}</div>
 					<div class="input-container">
-						<textarea id="message-input" placeholder="Ask for PyTorch help..."></textarea>
-						<button id="send-button">Send</button>
-						<button id="clear-button">Clear</button>
+						<textarea id="message-input" placeholder="Ask for PyTorch help..." ${isDisabled}></textarea>
+						<button id="send-button" ${isDisabled}>Send</button>
+						<button id="clear-button" ${isDisabled}>Clear</button>
 					</div>
 				</div>
 				<script src="${scriptUri}"></script>

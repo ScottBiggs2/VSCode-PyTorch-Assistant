@@ -107,8 +107,12 @@ if __name__ == '__main__':
     # Handle chat requests
     if '--chat' in sys.argv:
         chat_index = sys.argv.index('--chat')
-        prompt = ' '.join(sys.argv[chat_index+1:])
-        print(handle_chat_request(prompt, code))
+        if len(sys.argv) > chat_index + 1:
+            prompt = sys.argv[chat_index + 1]
+            print(handle_chat_request(prompt, code))
+        else:
+            print("Error: --chat flag requires a prompt argument.")
+            sys.exit(1)
     # Handle static analysis
     else:
         print(analyze_file(sys.argv[1]))
