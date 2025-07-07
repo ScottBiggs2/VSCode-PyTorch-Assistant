@@ -237,9 +237,18 @@ export function activate(context: vscode.ExtensionContext) {
 			if (!this._view) return;
 			if (this._pendingResponse) return;
 			
+			const thinkingMessages = [
+				'Thinking...',
+				'One moment...',
+				'Consulting the PyTorch docs...',
+				'Analyzing your code...',
+				'Let me check that...'
+			];
+			const randomMessage = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
+
 			this._pendingResponse = true;
 			this._conversation.push({ role: 'user', content: message });
-			this._conversation.push({ role: 'assistant', content: 'One moment...', isLoading: true });
+			this._conversation.push({ role: 'assistant', content: randomMessage, isLoading: true });
 			this._updateWebview();
 
 			try {

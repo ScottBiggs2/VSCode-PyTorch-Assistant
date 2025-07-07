@@ -33,6 +33,17 @@
         }
     });
 
+    // Use event delegation for insert code buttons
+    messagesContainer.addEventListener('click', event => {
+        if (event.target.classList.contains('insert-code-btn')) {
+            const codeBlock = event.target.previousElementSibling;
+            if (codeBlock && codeBlock.tagName === 'PRE') {
+                const code = codeBlock.textContent;
+                vscode.postMessage({ type: 'insertCode', code: code });
+            }
+        }
+    });
+
     // Auto-scroll to bottom when new messages arrive
     const observer = new MutationObserver(() => {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;

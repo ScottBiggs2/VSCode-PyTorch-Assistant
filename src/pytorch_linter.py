@@ -69,12 +69,12 @@ def handle_chat_request(user_input: str, code: str) -> str:
 ### User Request: {user_input}
 ### Code Context:
 {code}
-
 ### Response Guidelines:
-1. Return complete, runnable code blocks
-2. Wrap code in triple backticks
-3. Include comments for key steps
-4. Maintain existing code style"""
+1. Return complete, runnable code blocks.
+2. **Wrap all Python code in ```python ... ``` markdown blocks.**
+3. Add comments only for complex or non-obvious logic. Avoid over-commenting simple code.
+4. Maintain the user's existing code style.
+5. Prioritize correctness and efficiency in the generated PyTorch code."""
         return llm.invoke(system_prompt)
     
     except Exception as e:
