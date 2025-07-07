@@ -37,6 +37,26 @@ The extension is built on a two-part architecture:
     ollama pull deepseek-coder:1.3b
     ```
 
+## Building from Source
+
+If you want to contribute to the development or run the latest version from the repository:
+
+1.  **Clone the repository:**
+    ```sh
+    git clone https://github.com/your-username/pytorch-ai-assistant.git
+    cd pytorch-ai-assistant
+    ```
+
+2.  **Install dependencies:**
+    ```sh
+    npm install
+    ```
+
+3.  **Open in VSCode and Run:**
+    - Open the cloned project folder in Visual Studio Code.
+    - Press `F5` to open a new **Extension Development Host** window with the extension loaded and ready to use.
+
+
 ## Extension Settings
 
 This extension contributes the following settings:
@@ -57,5 +77,4 @@ Initial release of the PyTorch AI Assistant.
 - Static analysis and CodeLens quick fixes.
 - Interactive code insertion.
 
-----
 
