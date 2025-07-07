@@ -2,6 +2,13 @@ import sys
 import ast
 from langchain_community.llms import Ollama
 
+# To-do:
+# * streamline agent orchestration for better DeepSeek Coder outputs 
+# * update LLMs to qwen 3 4B and DeepSeekCoder 6.7B via ollama pull 
+# * do fine tuning of LLMs for PyTorch development specifically (need data first)
+# * build out knowledge and compute graphs for model context and error catching. 
+# *
+
 class CodeAnalyzer(ast.NodeVisitor):
     def __init__(self):
         self.issues = []
