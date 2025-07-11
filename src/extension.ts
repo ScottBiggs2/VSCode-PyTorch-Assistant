@@ -349,9 +349,10 @@ export function activate(context: vscode.ExtensionContext) {
 					.replace(/"/g, "&quot;")
 					.replace(/'/g, "&#039;");
 
+			// Maybe put in some more flavorful emojois for the user/assistant here
 			const messages = this._conversation.map(msg => {
 				const roleClass = msg.role === 'user' ? 'user-message' : 'assistant-message';
-				const avatar = msg.role === 'user' ? '👤' : '🤖';
+				const avatar = msg.role === 'user' ? '👨‍💻' : '🤖';
 				
 				if (msg.isLoading) {
 					return `<div class="message assistant-message loading">
