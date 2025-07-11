@@ -47,6 +47,7 @@ class CodeAnalyzer(ast.NodeVisitor):
         return False
 
 def handle_chat_request(user_input: str, code: str) -> str:
+    # Needs total rewrite for agent system management
     try:
         # Determine if we should use Qwen or DeepSeek
         use_qwen = any(keyword in user_input.lower() for keyword in 
