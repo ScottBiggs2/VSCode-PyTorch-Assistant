@@ -4,7 +4,6 @@ A powerful AI assistant integrated directly into Visual Studio Code to accelerat
 
 This extension leverages local Large Language Models (LLMs) through [Ollama](https://ollama.com/) to ensure your code remains private and accessible offline.
 
-![feature-demo] ()
 
 ## Features
 
@@ -43,7 +42,7 @@ If you want to contribute to the development or run the latest version from the 
 
 1.  **Clone the repository:**
     ```sh
-    git clone https://github.com/your-username/pytorch-ai-assistant.git
+    git clone https://github.com/ScottBiggs2/VSCode-PyTorch-Assistant.git
     cd pytorch-ai-assistant
     ```
 
