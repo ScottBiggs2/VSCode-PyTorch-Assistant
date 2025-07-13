@@ -75,7 +75,6 @@
       }
     ]
   },
-
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
@@ -85,6 +84,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/python-shell": "^0.4.2",
@@ -98,6 +98,7 @@
   },
   "dependencies": {
     "@vscode/python-extension": "^1.0.5",
+    "diff": "^8.0.2",
     "python-shell": "^5.0.0"
   }
 }

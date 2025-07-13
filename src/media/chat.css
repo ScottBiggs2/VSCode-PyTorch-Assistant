@@ -121,13 +121,65 @@ button:disabled,
     position: relative;
 }
 
-.code-block pre {
-    margin: 0;
+.code-block.diff-file {
+    border: 1px solid var(--vscode-editorWarning-foreground);
+    margin-top: 15px;
+}
+
+.code-block-header {
+    background-color: var(--vscode-tab-inactiveBackground);
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: bold;
+    border-bottom: 1px solid var(--vscode-sideBar-border);
+}
+
+.diff-view {
+    font-family: var(--vscode-editor-font-family);
+    white-space: pre;
+    overflow-x: auto;
     padding: 10px;
+    padding-bottom: 45px;
     background-color: var(--vscode-editor-background);
     border-radius: 4px;
-    overflow: auto;
-    font-family: var(--vscode-editor-font-family);
+}
+
+.diff-view code span {
+    display: block;
+    white-space: pre-wrap;
+}
+
+.diff-line-added {
+    color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.diff-line-removed {
+    color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.diff-line-hunk {
+    color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.diff-line-context {
+    color: var(--vscode-editor-foreground);
+    opacity: 0.7;
+}
+
+.code-block pre {
+    margin: 0;
+}
+
+.apply-changes-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: 1px solid var(--vscode-button-border, transparent);
+    padding: 4px 10px;
+    font-size: 13px;
+    cursor: pointer;
 }
 
 .insert-code-btn {
@@ -141,6 +193,12 @@ button:disabled,
     font-size: 12px;
     opacity: 0.7;
 }
+
+.apply-changes-btn:hover {
+    opacity: 1;
+    background-color: var(--vscode-button-hoverBackground);
+}
+
 .insert-code-btn:hover {
     opacity: 1;
 }

@@ -35,11 +35,18 @@
 
     // Use event delegation for insert code buttons
     messagesContainer.addEventListener('click', event => {
-        if (event.target.classList.contains('insert-code-btn')) {
-            const codeBlock = event.target.previousElementSibling;
+        const target = event.target;
+        if (target.classList.contains('insert-code-btn')) {
+            const codeBlock = target.previousElementSibling;
             if (codeBlock && codeBlock.tagName === 'PRE') {
                 const code = codeBlock.textContent;
                 vscode.postMessage({ type: 'insertCode', code: code });
+            }
+        } else if (target.classList.contains('apply-changes-btn')) {
+            // Get the full code from the data-code attribute
+            const code = target.dataset.code;
+            if (code) {
+                vscode.postMessage({ type: 'applyChanges', code: code });
             }
         }
     });

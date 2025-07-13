@@ -1,6 +1,7 @@
 import sys
 import ast
 import re
+import json
 from langchain_community.llms import Ollama
 from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain.prompts import PromptTemplate
@@ -71,54 +72,73 @@ class PyTorchAssistant:
         return self.orchestrator.invoke(prompt)
     
     def generate_code(self, refined_prompt: str, code: str) -> str:
-        prompt = f"""
-        ### Task Specification:
-        {refined_prompt}
-        ### Code Context:
-        {code}
-        ### Guidelines:
-        1. Generate minimal, runnable PyTorch code
-        2. Preserve existing style
-        3. Use ```python blocks
-        4. Add brief comments only for complex logic"""
+        # Updated prompt to request the full, modified file content
+        prompt = f"""You are an expert Python and PyTorch programmer. Your task is to modify the user's code based on their request.
+
+### Task Specification:
+{refined_prompt}
+
+### Full Original Code:
+```python
+{code}
+```
+
+### Instructions:
+- Respond with the *entire* modified Python file content.
+- Do NOT add any explanations, introductory text, or summaries.
+- Your entire response should be a single Python code block.
+- Example: ```python\\n# all the modified code here...\\n```
+- If no changes are needed, return the original code.
+"""
         return self.coder.invoke(prompt)
     
     def extract_code_blocks(self, response: str) -> str:
-        code_blocks = re.findall(r'```python\n(.*?)\n```', response, re.DOTALL)
-        return "\n\n".join(code_blocks) if code_blocks else response
+        # Expect a single code block with the full file content
+        match = re.search(r'```(?:python\n)?(.*)```', response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        # Fallback if the model doesn't use a code block
+        return response.strip()
 
     def handle_chat_request(self, user_input: str, code: str) -> str:
         try:
-            # Step 1: Determine request type
-            plan = self.orchestrator.invoke(
-                f"Classify this PyTorch request: '{user_input}'. "
-                "Respond with either 'EXPLANATION' or 'CODE_GENERATION'"
-            )
-            
-            if "EXPLANATION" in plan:
-                return self.orchestrator.invoke(
-                    f"Explain: {user_input}\nCode context: {code}\n"
-                    "Provide detailed explanations with examples."
-                )
-            
-            # Step 2: Refine and process code requests
-            refined = self.refine_prompt(user_input, code)
-            
-            if any(kw in user_input.lower() for kw in ['research', 'docs']):
-                return AgentExecutor(
-                    agent=self.agent,
-                    tools=[self.search_tool],
-                    verbose=True
-                ).invoke({
-                    "input": refined,
-                    "history": f"Code context: {code}"
-                })["output"]
-            
-            response = self.generate_code(refined, code)
-            return self.extract_code_blocks(response)
-            
+            # Unified prompt for both explanation and code generation
+            prompt = f"""
+You are an expert Python and PyTorch programmer providing an explanation.
+
+### User Request:
+{user_input}
+
+### Code Context:
+```python
+{code}
+```
+
+### Instructions:
+1.  Provide a clear and detailed explanation that answers the user's request. Use markdown for formatting.
+2.  Include small, illustrative code snippets in your explanation where necessary, using ```python blocks.
+3.  **If your explanation suggests specific changes to the user's code (modifications, additions, or deletions), then at the very end of your response, provide the complete, modified code for the entire file inside a single, final code block marked with ```python:apply`.**
+4.  If no changes are suggested, do not include a final ```python:apply` block.
+"""
+            response_text = self.orchestrator.invoke(prompt)
+
+            # Check for the special apply block
+            apply_match = re.search(r'```python:apply\n(.*?)\n```', response_text, re.DOTALL)
+
+            if apply_match:
+                full_code_changes = apply_match.group(1).strip()
+                # Remove the apply block from the main explanation text for a cleaner display
+                explanation_text = re.sub(r'```python:apply\n(.*?)\n```', '', response_text, flags=re.DOTALL).strip()
+                return json.dumps({
+                    "type": "explanation_with_changes",
+                    "explanation": explanation_text,
+                    "code": full_code_changes
+                })
+            else:
+                return json.dumps({"type": "explanation", "content": response_text})
+
         except Exception as e:
-            return f"❌ Error processing request: {str(e)}"
+            return json.dumps({"type": "error", "content": f"An error occurred: {str(e)}"})
 
 class CodeAnalyzer(ast.NodeVisitor):
     def __init__(self):
@@ -179,29 +199,24 @@ except Exception as e:
 def handle_chat_request(user_input: str, code: str) -> str:
     """Main entry point with error handling"""
     if not assistant:
-        return "❌ Assistant initialization failed"
+        return json.dumps({"type": "error", "content": "Assistant initialization failed"})
     
-    try:
-        return assistant.handle_chat_request(user_input, code)
-    except Exception as e:
-        return f"❌ Error processing request: {str(e)}"
-    
+    # The handle_chat_request now includes its own try/except and returns JSON
+    return assistant.handle_chat_request(user_input, code)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Error: Missing file path argument")
-        sys.exit(1)
-        
-    with open(sys.argv[1], 'r') as f:
-        code = f.read()
-    
-    if '--chat' in sys.argv:
-        chat_index = sys.argv.index('--chat')
-        if len(sys.argv) > chat_index + 1:
-            prompt = sys.argv[chat_index + 1]
-            print(handle_chat_request(prompt, code))
-        else:
-            print("Error: --chat flag requires a prompt argument.")
-            sys.exit(1)
-    else:
-        print(analyze_file(sys.argv[1]))
+    # This script now reads from stdin for chat requests
+    # The static analysis part can be triggered by a different command if needed
+    for line in sys.stdin:
+        try:
+            data = json.loads(line)
+            if data.get("command") == "chat":
+                prompt = data.get("prompt", "")
+                code = data.get("code", "")
+                response = handle_chat_request(prompt, code)
+                # The response is already a JSON string, so we just print it
+                print(response)
+                sys.stdout.flush()
+        except json.JSONDecodeError:
+            print(json.dumps({"type": "error", "content": "Invalid JSON from extension."}))
+            sys.stdout.flush()
