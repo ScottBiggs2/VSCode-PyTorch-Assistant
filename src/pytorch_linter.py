@@ -100,8 +100,18 @@ class PyTorchAssistant:
         # Fallback if the model doesn't use a code block
         return response.strip()
 
-    def handle_chat_request(self, user_input: str, code: str) -> str:
+    def handle_chat_request(self, user_input: str, files: list) -> str:
         try:
+            # Construct a single string with all file contexts
+            code_context_parts = []
+            for file_info in files:
+                file_path = file_info.get('filePath', 'unknown_file')
+                content = file_info.get('content', '')
+                # Using a clear separator for the LLM
+                code_context_parts.append(f"### FILE: {file_path} ###\n\n```python\n{content}\n```")
+            
+            code_context = "\n\n---\n\n".join(code_context_parts)
+
             # Unified prompt for both explanation and code generation
             prompt = f"""
 You are an expert Python and PyTorch programmer providing an explanation.
@@ -110,29 +120,34 @@ You are an expert Python and PyTorch programmer providing an explanation.
 {user_input}
 
 ### Code Context:
-```python
-{code}
-```
+{code_context}
 
 ### Instructions:
 1.  Provide a clear and detailed explanation that answers the user's request. Use markdown for formatting.
-2.  Include small, illustrative code snippets in your explanation where necessary, using ```python blocks.
-3.  **If your explanation suggests specific changes to the user's code (modifications, additions, or deletions), then at the very end of your response, provide the complete, modified code for the entire file inside a single, final code block marked with ```python:apply`.**
-4.  If no changes are suggested, do not include a final ```python:apply` block.
+2.  Include small, illustrative code snippets in your explanation where necessary, using ````python` blocks.
+3.  **If your explanation suggests specific changes to the user's code, provide the complete, modified code for each changed file at the end of your response. Each file's content must be inside a separate code block, marked with ````python:apply:path/to/your/file.py`.**
+4.  If only one file is changed, use one block. If multiple files are changed, use multiple blocks.
+5.  If no changes are suggested, do not include any ````python:apply` blocks.
 """
             response_text = self.orchestrator.invoke(prompt)
 
-            # Check for the special apply block
-            apply_match = re.search(r'```python:apply\n(.*?)\n```', response_text, re.DOTALL)
+            # New logic to find all apply blocks with file paths
+            apply_pattern = r'```python:apply:(.*?)\n(.*?)\n```'
+            matches = re.finditer(apply_pattern, response_text, re.DOTALL)
 
-            if apply_match:
-                full_code_changes = apply_match.group(1).strip()
-                # Remove the apply block from the main explanation text for a cleaner display
-                explanation_text = re.sub(r'```python:apply\n(.*?)\n```', '', response_text, flags=re.DOTALL).strip()
+            changes = []
+            for match in matches:
+                file_path = match.group(1).strip()
+                new_content = match.group(2).strip()
+                if file_path and new_content:
+                    changes.append({"filePath": file_path, "newContent": new_content})
+
+            if changes:
+                explanation_text = re.sub(apply_pattern, '', response_text, flags=re.DOTALL).strip()
                 return json.dumps({
-                    "type": "explanation_with_changes",
+                    "type": "multi_file_change",
                     "explanation": explanation_text,
-                    "code": full_code_changes
+                    "changes": changes
                 })
             else:
                 return json.dumps({"type": "explanation", "content": response_text})
@@ -196,13 +211,13 @@ except Exception as e:
     print(f"Failed to initialize PyTorchAssistant: {str(e)}")
     assistant = None
 
-def handle_chat_request(user_input: str, code: str) -> str:
+def handle_chat_request(user_input: str, files: list) -> str:
     """Main entry point with error handling"""
     if not assistant:
         return json.dumps({"type": "error", "content": "Assistant initialization failed"})
     
     # The handle_chat_request now includes its own try/except and returns JSON
-    return assistant.handle_chat_request(user_input, code)
+    return assistant.handle_chat_request(user_input, files)
 
 if __name__ == '__main__':
     # This script now reads from stdin for chat requests
@@ -212,8 +227,8 @@ if __name__ == '__main__':
             data = json.loads(line)
             if data.get("command") == "chat":
                 prompt = data.get("prompt", "")
-                code = data.get("code", "")
-                response = handle_chat_request(prompt, code)
+                files = data.get("files", [])
+                response = handle_chat_request(prompt, files)
                 # The response is already a JSON string, so we just print it
                 print(response)
                 sys.stdout.flush()

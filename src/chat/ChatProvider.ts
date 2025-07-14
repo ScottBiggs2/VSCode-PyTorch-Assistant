@@ -1,17 +1,23 @@
 import * as vscode from 'vscode';
 import { PythonShell } from 'python-shell';
 import * as path from 'path';
+import { TextDecoder } from 'util';
 import * as Diff from 'diff';
 
 // A more structured message type for our conversation
 export interface ChatMessage {
     role: 'user' | 'assistant';
-    type: 'user_input' | 'explanation' | 'replace_file' | 'error' | 'loading' | 'explanation_with_changes';
+    type: 'user_input' | 'explanation' | 'replace_file' | 'error' | 'loading' | 'explanation_with_changes' | 'multi_file_change';
     content?: string; // For simple message types
     isLoading?: boolean;
     explanation?: string; // For explanation_with_changes
     code?: string; // For explanation_with_changes and replace_file
     diff?: string; // For rendering diffs
+    changes?: {
+        filePath: string;
+        newCode: string;
+        diff: string;
+    }[];
 }
 
 export class PyTorchChatProvider implements vscode.WebviewViewProvider {
@@ -19,6 +25,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _conversation: ChatMessage[] = [];
     private _pendingResponse = false;
+    private _contextFiles: vscode.Uri[] = [];
 
     constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -40,6 +47,12 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
             switch (data.type) {
                 case 'sendMessage':
                     await this._handleUserMessage(data.message);
+                    break;
+                case 'addFile':
+                    await this._handleAddFile();
+                    break;
+                case 'removeFile':
+                    this._handleRemoveFile(data.uri);
                     break;
                 case 'clearChat':
                     this._conversation = [];
@@ -64,8 +77,37 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                         activeEditor.edit(editBuilder => editBuilder.replace(fullRange, data.code));
                     }
                     break;
+                case 'applyMultiFileChanges':
+                    try {
+                        const changesToApply = JSON.parse(data.changes);
+                        this._handleApplyMultiFileChanges(changesToApply);
+                    } catch (e) { console.error("Failed to parse multi-file changes:", e); }
+                    break;
             }
         });
+    }
+
+    private async _handleAddFile() {
+        const files = await vscode.window.showOpenDialog({
+            canSelectMany: true,
+            openLabel: 'Add to Context',
+            title: 'Select Files for AI Context'
+        });
+
+        if (files) {
+            files.forEach(fileUri => {
+                // Avoid adding duplicates
+                if (!this._contextFiles.some(existingUri => existingUri.toString() === fileUri.toString())) {
+                    this._contextFiles.push(fileUri);
+                }
+            });
+            this._updateWebview();
+        }
+    }
+
+    private _handleRemoveFile(uriString: string) {
+        this._contextFiles = this._contextFiles.filter(uri => uri.toString() !== uriString);
+        this._updateWebview();
     }
 
     private async _handleUserMessage(message: string) {
@@ -100,8 +142,25 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            const code = editor.document.getText();
-            const jsonResponse = await this._getLLMResponse(message, code);
+            const activeDocument = editor.document;
+
+            // Aggregate all context files, starting with the active one
+            const allFiles = [{
+                filePath: activeDocument.uri.fsPath,
+                content: activeDocument.getText()
+            }];
+
+            for (const fileUri of this._contextFiles) {
+                try {
+                    const contentBytes = await vscode.workspace.fs.readFile(fileUri);
+                    const content = new TextDecoder().decode(contentBytes);
+                    allFiles.push({ filePath: fileUri.fsPath, content });
+                } catch (e) {
+                    vscode.window.showWarningMessage(`Could not read file: ${fileUri.fsPath}`);
+                }
+            }
+
+            const jsonResponse = await this._getLLMResponse(message, allFiles);
             const responseObject = JSON.parse(jsonResponse);
 
             // Replace loading message with actual response
@@ -110,17 +169,30 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 this._conversation.pop();
             }
             
-            const originalCode = editor.document.getText();
-            let newCode: string | undefined;
-            if (responseObject.type === 'replace_file') {
-                newCode = responseObject.content;
-            } else if (responseObject.type === 'explanation_with_changes') {
-                newCode = responseObject.code;
-            }
-
             let messageToPush: ChatMessage;
 
-            if (responseObject.type === 'explanation_with_changes' && newCode) {
+            if (responseObject.type === 'multi_file_change') {
+                const changesWithDiffs = [];
+                for (const change of responseObject.changes) {
+                    const originalFile = allFiles.find(f => f.filePath === change.filePath);
+                    const originalContent = originalFile ? originalFile.content : '';
+
+                    if (!originalFile) {
+                        vscode.window.showWarningMessage(`Could not find original content for ${change.filePath} to compute diff.`);
+                    }
+
+                    const diff = this._computeDiff(originalContent, change.newContent);
+                    changesWithDiffs.push({ filePath: change.filePath, newCode: change.newContent, diff });
+                }
+                messageToPush = {
+                    role: 'assistant',
+                    type: 'multi_file_change',
+                    explanation: responseObject.explanation,
+                    changes: changesWithDiffs
+                };
+            } else if (responseObject.type === 'explanation_with_changes') {
+                const newCode = responseObject.code;
+                const originalCode = editor.document.getText();
                 const diff = this._computeDiff(originalCode, newCode);
                 messageToPush = {
                     role: 'assistant',
@@ -129,7 +201,9 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                     code: newCode,
                     diff: diff
                 };
-            } else if (responseObject.type === 'replace_file' && newCode) {
+            } else if (responseObject.type === 'replace_file') {
+                const newCode = responseObject.content;
+                const originalCode = editor.document.getText();
                 const diff = this._computeDiff(originalCode, newCode);
                 messageToPush = {
                     role: 'assistant',
@@ -155,7 +229,39 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _getLLMResponse(message: string, code: string): Promise<string> {
+    /**
+     * Applies a series of file changes to the workspace using a single atomic operation.
+     * This function creates a WorkspaceEdit, which is a container for multiple edits
+     * across different files. By using applyEdit, we ensure that either all changes
+     * are applied, or none are, preventing the workspace from being left in a
+     * partially modified state.
+     * @param changes An array of objects, each with a filePath and the newCode for that file.
+     */
+    private async _handleApplyMultiFileChanges(changes: { filePath: string, newCode: string }[]) {
+        if (!changes || changes.length === 0) {
+            return;
+        }
+
+        const workspaceEdit = new vscode.WorkspaceEdit();
+        for (const change of changes) {
+            const fileUri = vscode.Uri.file(change.filePath);
+            // To replace the entire content, we create a range that spans the whole document.
+            // A massive range from line 0 to a very large line number ensures we cover everything.
+            // VS Code's applyEdit will correctly handle this to replace the entire file content.
+            const fullRange = new vscode.Range(new vscode.Position(0, 0), new vscode.Position(999999, 999999));
+            workspaceEdit.replace(fileUri, fullRange, change.newCode);
+        }
+
+        const success = await vscode.workspace.applyEdit(workspaceEdit);
+        if (success) {
+            vscode.window.showInformationMessage(`Applied changes to ${changes.length} files.`);
+        } else {
+            vscode.window.showErrorMessage('Failed to apply multi-file changes.');
+        }
+    }
+
+
+    private async _getLLMResponse(message: string, files: {filePath: string, content: string}[]): Promise<string> {
         return new Promise((resolve, reject) => {
             const scriptPath = path.join(this._context.extensionPath, 'src', 'pytorch_linter.py');
 
@@ -165,8 +271,8 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 pythonPath: 'python3'
             });
 
-            // Send the user's message and code to the Python script
-            pyshell.send({ command: 'chat', prompt: message, code: code });
+            // Send the user's message and all file contexts to the Python script
+            pyshell.send({ command: 'chat', prompt: message, files: files });
 
             let response: any;
             pyshell.on('message', (message: any) => {
@@ -290,9 +396,24 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                                         </div>`;
                     contentHtml = explanationPart + changesPart;
                     break;
+                case 'multi_file_change':
+                    const explanationPartMulti = renderExplanation(msg.explanation ?? '');
+                    const changesPartMulti = (msg.changes ?? []).map(change => `
+                        <div class="code-block diff-file">
+                            <div class="code-block-header">
+                                <span class="codicon codicon-file"></span>
+                                ${escapeHtml(path.basename(change.filePath))}
+                            </div>
+                            <pre class="diff-view"><code>${this._renderDiff(change.diff ?? '')}</code></pre>
+                        </div>
+                    `).join('');
+                    
+                    const serializableChanges = msg.changes?.map(c => ({ filePath: c.filePath, newCode: c.newCode })) ?? [];
+                    const applyAllButton = `<button class="apply-all-changes-btn" data-changes='${escapeHtml(JSON.stringify(serializableChanges))}'>Apply All Changes</button>`;
+                    contentHtml = explanationPartMulti + changesPartMulti + applyAllButton;
+                    break;
                 default:
                     contentHtml = escapeHtml(content);
-
             }
 
             return `<div class="message ${roleClass}">
@@ -310,9 +431,85 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>PyTorch Assistant</title>
             <link href="${styleUri}" rel="stylesheet">
+                        <style>
+                .context-files-container {
+                    padding: 8px;
+                    margin-bottom: 10px;
+                    border-bottom: 1px solid var(--vscode-divider-background);
+                }
+                .context-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 5px;
+                }
+                .context-header h4 {
+                    margin: 0;
+                    font-size: 0.9em;
+                    font-weight: 600;
+                    text-transform: uppercase;
+                    opacity: 0.7;
+                }
+                .code-block-header .codicon {
+                    margin-right: 5px;
+                }
+                .add-file-button {
+                    background: none;
+                    border: none;
+                    color: var(--vscode-foreground);
+                    cursor: pointer;
+                    font-size: 1.5em;
+                    line-height: 1;
+                }
+                #context-files-list {
+                    list-style: none;
+                    padding: 0;
+                    margin: 0;
+                    max-height: 100px;
+                    overflow-y: auto;
+                }
+                #context-files-list li {
+                    display: flex;
+                    align-items: center;
+                    margin-bottom: 4px;
+                    font-size: 0.9em;
+                }
+                .file-name {
+                    margin-left: 5px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .remove-context-btn {
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    color: var(--vscode-foreground);
+                    margin-left: auto;
+                    padding: 0 5px;
+                    opacity: 0.6;
+                }
+                .remove-context-btn:hover {
+                    opacity: 1;
+                }
+            </style>
         </head>
         <body>
             <div class="chat-container">
+                <div class="context-files-container">
+                    <div class="context-header">
+                        <h4>Context Files</h4>
+                        <button id="add-file-btn" class="add-file-button" title="Add files to context">+</button>
+                    </div>
+                    <ul id="context-files-list">
+                        ${this._contextFiles.map(uri => `
+                            <li>
+                                <span class="codicon codicon-file"></span>
+                                <span class="file-name" title="${uri.fsPath}">${path.basename(uri.fsPath)}</span>
+                                <button class="remove-context-btn" data-uri="${uri.toString()}">×</button>
+                            </li>`).join('')}
+                    </ul>
+                </div>
                 <div class="messages">${messages}</div>
                 <div class="input-container">
                     <textarea id="message-input" placeholder="Ask for PyTorch help..." ${isDisabled}></textarea>
@@ -320,7 +517,64 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                     <button id="clear-button" ${isDisabled}>Clear</button>
                 </div>
             </div>
-            <script src="${scriptUri}"></script>
+            <script>
+                (function() {
+                    const vscode = acquireVsCodeApi();
+                    const messageInput = document.getElementById('message-input');
+                    const sendButton = document.getElementById('send-button');
+                    const clearButton = document.getElementById('clear-button');
+                    const messagesContainer = document.querySelector('.messages');
+
+                    function sendMessage() {
+                        if (messageInput.value.trim()) {
+                            vscode.postMessage({ type: 'sendMessage', message: messageInput.value });
+                            messageInput.value = '';
+                        }
+                    }
+
+                    sendButton.addEventListener('click', sendMessage);
+
+                    messageInput.addEventListener('keydown', (event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                            event.preventDefault();
+                            sendMessage();
+                        }
+                    });
+
+                    clearButton.addEventListener('click', () => {
+                        vscode.postMessage({ type: 'clearChat' });
+                    });
+
+                    // Use event delegation for dynamically added buttons
+                    document.body.addEventListener('click', event => {
+                        const target = event.target;
+
+                        if (target.classList.contains('insert-code-btn')) {
+                            const code = target.closest('.code-block').querySelector('code').textContent;
+                            vscode.postMessage({ type: 'insertCode', code: code });
+                        }
+
+                        if (target.classList.contains('apply-changes-btn')) {
+                            const code = target.dataset.code;
+                            vscode.postMessage({ type: 'applyChanges', code: code });
+                        }
+
+                        if (target.classList.contains('apply-all-changes-btn')) {
+                            const changes = target.dataset.changes;
+                            vscode.postMessage({ type: 'applyMultiFileChanges', changes: changes });
+                        }
+
+                        if (target.id === 'add-file-btn') {
+                             vscode.postMessage({ type: 'addFile' });
+                        }
+
+                        if (target.classList.contains('remove-context-btn')) {
+                            const uri = target.dataset.uri;
+                            vscode.postMessage({ type: 'removeFile', uri: uri });
+                        }
+                    });
+                }());
+            </script>
         </body>
         </html>`;
     }
