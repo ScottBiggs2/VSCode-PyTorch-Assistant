@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { PythonShell } from 'python-shell';
 import * as path from 'path';
 
+import { PyTorchCodeLensProvider } from './providers/PyTorchCodeLensProvider';
 import { PyTorchChatProvider } from './chat/ChatProvider';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -26,18 +27,26 @@ export function activate(context: vscode.ExtensionContext) {
         message: string;
     }
 
+    interface SuggestionData {
+        startLine: number;
+        endLine: number;
+        newText: string;
+        message: string;
+    }
+
     // ======================
     // 3. Parse LLM Output
     // ======================
-    function parseSuggestion(output: string): CodeSuggestion | null {
+    function parseSuggestionData(output: string): SuggestionData | null {
         const match = output.match(/Line (\d+)(?:-(\d+))?: (.*?):\s*(.*)/s);
         if (!match) return null;
 
         const startLine = parseInt(match[1]) - 1;
         const endLine = match[2] ? parseInt(match[2]) - 1 : startLine;
-        
+
         return {
-            range: new vscode.Range(startLine, 0, endLine, 1000),
+            startLine,
+            endLine,
             newText: match[4].trim(),
             message: match[3].trim()
         };
@@ -92,9 +101,16 @@ export function activate(context: vscode.ExtensionContext) {
             
             pyshell.on('message', (message: string) => {
                 outputChannel.appendLine(message);
-                const suggestion = parseSuggestion(message);
-                if (suggestion) {
-                    suggestions.push(suggestion);
+                const suggestionData = parseSuggestionData(message);
+                if (suggestionData) {
+                    const { startLine, endLine, newText, message } = suggestionData;
+                    // Ensure line numbers are within the document's bounds
+                    const validEndLine = Math.min(endLine, editor.document.lineCount - 1);
+                    const range = new vscode.Range(
+                        startLine, 0,
+                        validEndLine, editor.document.lineAt(validEndLine).text.length
+                    );
+                    suggestions.push({ range, newText, message });
                 }
             });
 
@@ -149,46 +165,8 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     // ======================
-    // 8. Enhanced CodeLens Provider
+    // 8. Register CodeLens Provider
     // ======================
-    class PyTorchCodeLensProvider implements vscode.CodeLensProvider {
-        async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
-            const lenses: vscode.CodeLens[] = [];
-            const config = vscode.workspace.getConfiguration('pytorchHelper');
-            
-            if (!config.get<boolean>('enableCodeLens', true)) {
-                return lenses;
-            }
-
-            for (let i = 0; i < document.lineCount; i++) {
-                const line = document.lineAt(i);
-                
-                // Better tensor detection
-                if (line.text.includes('Tensor(') && 
-                    !line.text.includes('.to(device)') &&
-                    !line.text.includes('device=')) {
-                    lenses.push(new vscode.CodeLens(line.range, {
-                        title: "⚡ Add .to(device)",
-                        command: 'pytorch-helper.quickFix',
-                        arguments: [document.uri, i, 'device']
-                    }));
-                }
-                
-                // Better backward detection
-                if (line.text.includes('backward(') && 
-                    !line.text.includes('retain_graph') &&
-                    !line.text.includes('retain_graph=')) {
-                    lenses.push(new vscode.CodeLens(line.range, {
-                        title: "⚡ Add retain_graph",
-                        command: 'pytorch-helper.quickFix',
-                        arguments: [document.uri, i, 'retain']
-                    }));
-                }
-            }
-            return lenses;
-        }
-    }
-
     const codeLensProvider = new PyTorchCodeLensProvider();
     context.subscriptions.push(
         vscode.languages.registerCodeLensProvider('python', codeLensProvider)
