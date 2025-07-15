@@ -2,7 +2,8 @@ import sys
 import ast
 import re
 import json
-from langchain_community.llms import Ollama
+# from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain.prompts import PromptTemplate
 from langchain_community.utilities import WikipediaAPIWrapper
@@ -10,8 +11,17 @@ from langchain_community.utilities import WikipediaAPIWrapper
 class PyTorchAssistant:
     def __init__(self):
         # Initialize with updated Ollama import
-        self.orchestrator = Ollama(model="qwen2.5:3b")
-        self.coder = Ollama(model="deepseek-coder:1.3B")
+
+        # to-do: update LLMs and set reasoning = True 
+        # [https://python.langchain.com/api_reference/ollama/llms/langchain_ollama.llms.OllamaLLM.html]
+        
+        # self.orchestrator = Ollama(model="qwen2.5:3b")
+        # self.coder = Ollama(model="deepseek-coder:1.3B")
+
+        # Upgrades while keeping models small
+        self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=False)
+        self.coder = OllamaLLM(model="deepseek-r1:1.5b", reasoning=True)
+
         self.search_tool = Tool(
             name="PyTorch Documentation Search",
             func=self.search_docs,
@@ -147,13 +157,14 @@ You are an expert Python and PyTorch programmer providing an explanation.
                 return json.dumps({
                     "type": "multi_file_change",
                     "explanation": explanation_text,
-                    "changes": changes
+                    "changes": changes,
                 })
             else:
                 return json.dumps({"type": "explanation", "content": response_text})
 
         except Exception as e:
             return json.dumps({"type": "error", "content": f"An error occurred: {str(e)}"})
+
 
 class CodeAnalyzer(ast.NodeVisitor):
     def __init__(self):
@@ -169,7 +180,7 @@ class CodeAnalyzer(ast.NodeVisitor):
                         'line': node.lineno,
                         'message': 'Tensor created without device assignment',
                         'fix': f"{target_name}.to(device)"
-                    })
+                    })                
     
     def visit_Call(self, node):
         if isinstance(node.func, ast.Attribute) and \
@@ -179,7 +190,7 @@ class CodeAnalyzer(ast.NodeVisitor):
                 'line': node.lineno,
                 'message': 'Missing retain_graph in backward()',
                 'fix': 'retain_graph=True'
-            })
+            })        
         self.generic_visit(node)
     
     def _has_device_operation(self, node):
@@ -188,6 +199,7 @@ class CodeAnalyzer(ast.NodeVisitor):
                 if parent.func.attr in self.device_operations:
                     return True
         return False
+
 
 def analyze_file(file_path: str) -> str:
     with open(file_path, 'r') as f:
@@ -204,6 +216,7 @@ def analyze_file(file_path: str) -> str:
         )
     return "No PyTorch issues found"
 
+
 # Initialize assistant with error handling
 try:
     assistant = PyTorchAssistant()
@@ -216,7 +229,7 @@ def handle_chat_request(user_input: str, files: list) -> str:
     if not assistant:
         return json.dumps({"type": "error", "content": "Assistant initialization failed"})
     
-    # The handle_chat_request now includes its own try/except and returns JSON
+
     return assistant.handle_chat_request(user_input, files)
 
 if __name__ == '__main__':
