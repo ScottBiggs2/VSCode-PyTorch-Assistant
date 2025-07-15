@@ -1,4 +1,4 @@
 torch 
-lagnchain
+langchain
 langchain_ollama
 

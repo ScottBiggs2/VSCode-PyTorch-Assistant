@@ -1,7 +1,10 @@
 import sys
+import os
 import ast
 import re
 import json
+import tempfile
+import subprocess
 # from langchain_community.llms import Ollama
 from langchain_ollama import OllamaLLM
 from langchain.agents import AgentExecutor, Tool, create_react_agent
@@ -19,22 +22,42 @@ class PyTorchAssistant:
         # self.coder = Ollama(model="deepseek-coder:1.3B")
 
         # Upgrades while keeping models small
-        self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=False)
+        self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=True)
         self.coder = OllamaLLM(model="deepseek-r1:1.5b", reasoning=True)
 
         self.search_tool = Tool(
-            name="PyTorch Documentation Search",
+            name="Wikipedia Search",
             func=self.search_docs,
-            description="Search PyTorch documentation for API references and best practices"
+            description="Search Wikipedia for useful general knowledge"
         )
+        
+        self.code_tool = Tool(
+            name="DeepSeek Coder",
+            func=self.generate_code,
+            description="Generate and modify code based on user requests and context"
+        )
+
+        self.test_code_tool = Tool(
+            name="test_code",
+            func=self.test_code_func,
+            description="Test python code to check for errors and verify its output against an expected result. Input should be a JSON string with 'code' and 'expected_output' keys. The 'code' should be a complete runnable script. The 'expected_output' should be the exact string the script is expected to print to stdout."
+        )
+
+        # self.knowledge_graph_tool = Tool(
+        #     name="Knowledge Graph",
+        #     func= _________,
+        #     description="Search Knowledge Graph for useful documentation"
+        # )
+
         self.agent = self.create_agent()
 
     def create_agent(self):
         """Create agent with proper prompt template including tool_names"""
-        tools = [self.search_tool]
+        tools = [self.search_tool, self.code_tool, self.test_code_tool]
         
         prompt_template = PromptTemplate.from_template("""
         You are PyTorchMaster, an expert AI assistant for PyTorch development.
+        When writing or modifying code, you should test it with the `test_code` tool to ensure it works correctly before providing the final answer.
         Use these tools when needed:
         {tools}
         
@@ -43,11 +66,15 @@ class PyTorchAssistant:
         
         Follow this format:
         Question: the input question
-        Thought: think about what to do
+        Thought: I need to write some code. I should also think about how to test it to verify the result.
         Action: the action to take (one of: {tool_names})
         Action Input: the input to the action
         Observation: the result of the action
-        ... (repeat as needed)
+        Thought: I can now test the generated code. I'll write a simple test case.
+        Action: test_code
+        Action Input: {{"code": "import torch\\n\\n# ... code to test ...\\n\\nprint(result)", "expected_output": "expected result"}}
+        Observation: The test passed/failed.
+        ... (if the test fails, repeat the cycle of Thought, Action (DeepSeek Coder), Observation, Action (test_code), Observation until the test passes)
         Thought: I now know the final answer
         Final Answer: the final answer
         
@@ -67,9 +94,9 @@ class PyTorchAssistant:
         )
 
     def search_docs(self, query: str) -> str:
-        """Search PyTorch documentation (placeholder - integrate KG later)"""
+        """Search Wikipedia (placeholder - integrate KG later)"""
         wikipedia = WikipediaAPIWrapper()
-        return wikipedia.run(f"{query}") # can search wikipedia
+        return wikipedia.run(f"{query}") 
     
     def refine_prompt(self, user_input: str, code: str) -> str:
         prompt = f"""
@@ -102,6 +129,59 @@ class PyTorchAssistant:
 """
         return self.coder.invoke(prompt)
     
+    def test_code_func(self, input_str: str) -> str:
+        """
+        Tests Python code by executing it in a temporary file and comparing its stdout to an expected output.
+        The input must be a JSON string containing 'code' and 'expected_output'.
+        """
+        try:
+            data = json.loads(input_str)
+            code_to_test = data.get("code")
+            expected_output = data.get("expected_output")
+
+            if code_to_test is None:
+                return "Error: 'code' key not found in input JSON."
+
+        except json.JSONDecodeError:
+            return "Error: Invalid JSON input. Please provide a JSON string with 'code' and 'expected_output' keys."
+        except Exception as e:
+            return f"Error parsing input: {str(e)}"
+
+        # Create a temporary file to write the code to
+        try:
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.py', delete=False) as temp_file:
+                temp_file.write(code_to_test)
+                temp_file_path = temp_file.name
+            
+            # Execute the code in the temporary file
+            result = subprocess.run(
+                [sys.executable, temp_file_path],
+                capture_output=True,
+                text=True,
+                timeout=15  # Set a timeout to prevent long-running code
+            )
+
+            if result.returncode != 0:
+                return f"Execution failed with error:\n{result.stderr}"
+
+            actual_output = result.stdout.strip()
+            
+            if expected_output is not None:
+                if actual_output == expected_output.strip():
+                    return "Test Passed: The code ran successfully and the output matches the expected result."
+                else:
+                    return f"Test Failed: Output did not match expected result.\nExpected:\n---\n{expected_output.strip()}\n---\n\nActual:\n---\n{actual_output}\n---"
+            else:
+                # If no expected output is provided, just confirm successful execution
+                return f"Code executed successfully without errors.\nOutput:\n{actual_output}"
+
+        except Exception as e:
+            return f"An unexpected error occurred during testing: {str(e)}"
+        finally:
+            # Ensure the temporary file is deleted
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+
     def extract_code_blocks(self, response: str) -> str:
         # Expect a single code block with the full file content
         match = re.search(r'```(?:python\n)?(.*)```', response, re.DOTALL)
@@ -126,6 +206,7 @@ class PyTorchAssistant:
             prompt = f"""
 You are an expert Python and PyTorch programmer providing an explanation.
 
+You can use the DeepSeek code tool to generate code changes.
 ### User Request:
 {user_input}
 
@@ -134,6 +215,7 @@ You are an expert Python and PyTorch programmer providing an explanation.
 
 ### Instructions:
 1.  Provide a clear and detailed explanation that answers the user's request. Use markdown for formatting.
+2.  Use the search tool to find any relevant documentation for this request.
 2.  Include small, illustrative code snippets in your explanation where necessary, using ````python` blocks.
 3.  **If your explanation suggests specific changes to the user's code, provide the complete, modified code for each changed file at the end of your response. Each file's content must be inside a separate code block, marked with ````python:apply:path/to/your/file.py`.**
 4.  If only one file is changed, use one block. If multiple files are changed, use multiple blocks.
@@ -144,7 +226,7 @@ You are an expert Python and PyTorch programmer providing an explanation.
             # New logic to find all apply blocks with file paths
             apply_pattern = r'```python:apply:(.*?)\n(.*?)\n```'
             matches = re.finditer(apply_pattern, response_text, re.DOTALL)
-
+            
             changes = []
             for match in matches:
                 file_path = match.group(1).strip()
@@ -154,7 +236,7 @@ You are an expert Python and PyTorch programmer providing an explanation.
 
             if changes:
                 explanation_text = re.sub(apply_pattern, '', response_text, flags=re.DOTALL).strip()
-                return json.dumps({
+                return  json.dumps({
                     "type": "multi_file_change",
                     "explanation": explanation_text,
                     "changes": changes,
