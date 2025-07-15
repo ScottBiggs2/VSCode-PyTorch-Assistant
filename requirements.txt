@@ -1,0 +1,4 @@
+torch 
+lagnchain
+langchain_ollama
+

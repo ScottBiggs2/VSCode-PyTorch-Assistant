@@ -69,7 +69,7 @@ class PyTorchAssistant:
     def search_docs(self, query: str) -> str:
         """Search PyTorch documentation (placeholder - integrate KG later)"""
         wikipedia = WikipediaAPIWrapper()
-        return wikipedia.run(f"PyTorch {query}")
+        return wikipedia.run(f"{query}") # can search wikipedia
     
     def refine_prompt(self, user_input: str, code: str) -> str:
         prompt = f"""
