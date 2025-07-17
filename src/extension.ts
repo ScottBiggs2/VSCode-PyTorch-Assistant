@@ -176,7 +176,7 @@ export function activate(context: vscode.ExtensionContext) {
 	// 9. Register Chat Panel
 	// ======================
     const chatProvider = new PyTorchChatProvider(context);
-	context.subscriptions.push(
+    context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(PyTorchChatProvider.viewType, chatProvider)
 	);
 

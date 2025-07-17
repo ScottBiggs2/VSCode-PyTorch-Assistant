@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyTorch Assistant Chat</title>
+    <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="messages"></div>
+        <div class="input-container">
+            <select id="model-select">
+                <option value="local">Local Qwen3 & DeepSeek-R1</option>
+                <option value="claude">Claude Sonnet 4</option>
+                <option value="codestral">Codestral</option>
+            </select>
+            <textarea id="message-input" placeholder="Type your message"></textarea>
+            <button id="send-button">Send</button>
+            <button id="clear-button">Clear</button>
+        </div>
+    </div>
+    <script src="chat.js"></script>
+</body>
+</html>

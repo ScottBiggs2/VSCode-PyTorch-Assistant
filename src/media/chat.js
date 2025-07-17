@@ -1,6 +1,7 @@
 (function() {
     const vscode = acquireVsCodeApi();
 
+    const modelSelect = document.getElementById('model-select'); // Get the dropdown
     const messageInput = document.getElementById('message-input');
     const sendButton = document.getElementById('send-button');
     const clearButton = document.getElementById('clear-button');
@@ -13,9 +14,11 @@
         }
         
         const message = messageInput.value.trim();
+        const selectedModel = modelSelect.value; // Get the selected model
         vscode.postMessage({
             type: 'sendMessage',
-            message: message
+            message: message,
+            model: selectedModel // Include the selected model in the message
         });
     }
 

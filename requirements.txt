@@ -1,4 +1,5 @@
 torch 
 langchain
 langchain_ollama
-
+langchain_mistralai
+python-dotenv

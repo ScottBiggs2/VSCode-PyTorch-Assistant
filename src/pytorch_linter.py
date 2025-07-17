@@ -1,33 +1,37 @@
 import sys
 import os
 import ast
+from dotenv import load_dotenv
 import re
 import json
 import tempfile
 import subprocess
+import traceback
+
 # from langchain_community.llms import Ollama
 from langchain_ollama import OllamaLLM
 from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain.prompts import PromptTemplate
 from langchain_community.utilities import WikipediaAPIWrapper
 
+load_dotenv()
+
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY") # Placeholder for future use
+
 class PyTorchAssistant:
     def __init__(self):
         # Initialize with updated Ollama import
-
-        # to-do: update LLMs and set reasoning = True 
         # [https://python.langchain.com/api_reference/ollama/llms/langchain_ollama.llms.OllamaLLM.html]
-        
-        # self.orchestrator = Ollama(model="qwen2.5:3b")
-        # self.coder = Ollama(model="deepseek-coder:1.3B")
 
         # Upgrades while keeping models small
         self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=True)
         self.coder = OllamaLLM(model="deepseek-r1:1.5b", reasoning=True)
+        # self.critic = OllamaLLM(model="qwen3:1.7b", reasoning=True)
 
         self.search_tool = Tool(
             name="Wikipedia Search",
-            func=self.search_docs,
+            func=self.search_wikipedia,
             description="Search Wikipedia for useful general knowledge"
         )
         
@@ -38,16 +42,36 @@ class PyTorchAssistant:
         )
 
         self.test_code_tool = Tool(
-            name="test_code",
+            name="Test Code",
             func=self.test_code_func,
             description="Test python code to check for errors and verify its output against an expected result. Input should be a JSON string with 'code' and 'expected_output' keys. The 'code' should be a complete runnable script. The 'expected_output' should be the exact string the script is expected to print to stdout."
         )
+
+        # self.code_review = Tool(
+        #     name="Code Review",
+        #     func= _________,
+        #     description="Review code to check underlying logic and goal alignment with user requests"
+        #)
+
+        # self.break_down_code = Tool(
+        #     name="Break Down Code",
+        #     func= _________,
+        #     description="Break down code to understand underlying logic and goals"
+        #)
+
+        # self.review_prd = Tool(
+        #     name="Review PRD",
+        #     func= _________,
+        #     description="Review PRD to understand project requirements, goals, and rules"
+        # )
 
         # self.knowledge_graph_tool = Tool(
         #     name="Knowledge Graph",
         #     func= _________,
         #     description="Search Knowledge Graph for useful documentation"
         # )
+
+        # MCP integration here? - if we go with cloud connection
 
         self.agent = self.create_agent()
 
@@ -93,7 +117,7 @@ class PyTorchAssistant:
             )
         )
 
-    def search_docs(self, query: str) -> str:
+    def search_wikipedia(self, query: str) -> str:
         """Search Wikipedia (placeholder - integrate KG later)"""
         wikipedia = WikipediaAPIWrapper()
         return wikipedia.run(f"{query}") 
@@ -306,13 +330,41 @@ except Exception as e:
     print(f"Failed to initialize PyTorchAssistant: {str(e)}")
     assistant = None
 
-def handle_chat_request(user_input: str, files: list) -> str:
+def handle_chat_request(user_input: str, files: list, model: str = "local") -> str:
     """Main entry point with error handling"""
     if not assistant:
         return json.dumps({"type": "error", "content": "Assistant initialization failed"})
     
+    if model == "local":
+        return assistant.handle_chat_request(user_input, files)
+    elif model == "codestral":
+        if not MISTRAL_API_KEY:
+            return json.dumps({"type": "error", "content": "MISTRAL_API_KEY not found in .env file. Please add it to use Codestral."})
+        try:
+            from langchain_mistralai import ChatMistralAI
 
-    return assistant.handle_chat_request(user_input, files)
+            llm = ChatMistralAI(
+                model="codestral-latest",
+                endpoint="https://codestral.mistral.ai/v1",
+                api_key=MISTRAL_API_KEY,
+                temperature=0.0,
+                max_retries=2,
+            )
+
+            prompt = f"""You are an expert Python and PyTorch programmer.\n ### User Request: \n{user_input}"""
+
+            response_text = llm.invoke(prompt).content
+            return json.dumps({"type": "explanation", "content": response_text})
+
+        except Exception as e:
+            traceback_str = ''.join(traceback.format_exception(None, e, e.__traceback__))
+            return json.dumps({"type": "error", "content": f"Error during Codestral API call: {str(e)} \n Traceback: {traceback_str}"})
+
+    elif model == "claude":
+        # TODO: Implement Claude call
+        return json.dumps({"type": "explanation", "content": f"Claude Sonnet 4 API support is not implemented yet."})
+    else:
+        return json.dumps({"type": "error", "content": f"Unknown model selected: {model}"})
 
 if __name__ == '__main__':
     # This script now reads from stdin for chat requests
@@ -323,7 +375,8 @@ if __name__ == '__main__':
             if data.get("command") == "chat":
                 prompt = data.get("prompt", "")
                 files = data.get("files", [])
-                response = handle_chat_request(prompt, files)
+                model = data.get("model", "local")
+                response = handle_chat_request(prompt, files, model)
                 # The response is already a JSON string, so we just print it
                 print(response)
                 sys.stdout.flush()

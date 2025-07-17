@@ -26,6 +26,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
     private _conversation: ChatMessage[] = [];
     private _pendingResponse = false;
     private _contextFiles: vscode.Uri[] = [];
+    private _currentModel: string = 'local'; // Default model
 
     constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -35,6 +36,8 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken
     ) {
         this._view = webviewView;
+
+        this._currentModel = this._context.workspaceState.get('selectedModel', 'local');
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -46,7 +49,11 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async data => {
             switch (data.type) {
                 case 'sendMessage':
-                    await this._handleUserMessage(data.message);
+                    this._currentModel = data.model;
+                    await this._handleUserMessage(data.message, this._currentModel); //Use _currentModel instead
+                     break;
+                 case 'modelSelected':
+                     this._currentModel = data.model;
                     break;
                 case 'addFile':
                     await this._handleAddFile();
@@ -83,6 +90,10 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                         this._handleApplyMultiFileChanges(changesToApply);
                     } catch (e) { console.error("Failed to parse multi-file changes:", e); }
                     break;
+                case 'modelSelected':
+                    this._currentModel = data.model;
+                    await this._context.workspaceState.update('selectedModel', data.model);
+                     break;
             }
         });
     }
@@ -110,7 +121,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
         this._updateWebview();
     }
 
-    private async _handleUserMessage(message: string) {
+    private async _handleUserMessage(message: string, model: string) {
         if (!this._view) return;
         if (this._pendingResponse) return;
         
@@ -160,7 +171,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 }
             }
 
-            const jsonResponse = await this._getLLMResponse(message, allFiles);
+            const jsonResponse = await this._getLLMResponse(message, allFiles, model);
             const responseObject = JSON.parse(jsonResponse);
 
             // Replace loading message with actual response
@@ -261,7 +272,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
     }
 
 
-    private async _getLLMResponse(message: string, files: {filePath: string, content: string}[]): Promise<string> {
+    private async _getLLMResponse(message: string, files: {filePath: string, content: string}[], model: string): Promise<string> {
         return new Promise((resolve, reject) => {
             const scriptPath = path.join(this._context.extensionPath, 'src', 'pytorch_linter.py');
 
@@ -272,7 +283,7 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
             });
 
             // Send the user's message and all file contexts to the Python script
-            pyshell.send({ command: 'chat', prompt: message, files: files });
+            pyshell.send({ command: 'chat', prompt: message, files: files, model: model });
 
             let response: any;
             pyshell.on('message', (message: any) => {
@@ -430,15 +441,20 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>PyTorch Assistant</title>
-            <link href="${styleUri}" rel="stylesheet">
+            <link rel="stylesheet" href="${styleUri}">
                         <style>
                 .context-files-container {
-                    padding: 8px;
-                    margin-bottom: 10px;
+                    padding: 8px;                    
+                    margin-bottom: 5px;
                     border-bottom: 1px solid var(--vscode-divider-background);
+                }
+                #model-select {
+                    width: 100%;
+                    margin-bottom: 5px;
                 }
                 .context-header {
                     display: flex;
+                    width: 100%;
                     justify-content: space-between;
                     align-items: center;
                     margin-bottom: 5px;
@@ -492,15 +508,23 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 .remove-context-btn:hover {
                     opacity: 1;
                 }
+                
             </style>
         </head>
         <body>
             <div class="chat-container">
                 <div class="context-files-container">
-                    <div class="context-header">
-                        <h4>Context Files</h4>
-                        <button id="add-file-btn" class="add-file-button" title="Add files to context">+</button>
-                    </div>
+                <div class="context-header">
+                    <h4>Context Files</h4>
+                    <button id="add-file-btn" class="add-file-button" title="Add files to context">+</button>
+                 </div>
+                <div>
+                <select id="model-select">
+                        <option value="local">Local Qwen3 & DeepSeek-R1</option>
+                        <option value="claude">Claude Sonnet 4</option>
+                        <option value="codestral">Codestral</option>
+                </select>                
+                </div>
                     <ul id="context-files-list">
                         ${this._contextFiles.map(uri => `
                             <li>
@@ -513,9 +537,10 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                 <div class="messages">${messages}</div>
                 <div class="input-container">
                     <textarea id="message-input" placeholder="Ask for PyTorch help..." ${isDisabled}></textarea>
-                    <button id="send-button" ${isDisabled}>Send</button>
+                    <button id="send-button" ${isDisabled}>Send</button>    
                     <button id="clear-button" ${isDisabled}>Clear</button>
                 </div>
+                    </div>
             </div>
             <script>
                 (function() {
@@ -524,13 +549,24 @@ export class PyTorchChatProvider implements vscode.WebviewViewProvider {
                     const sendButton = document.getElementById('send-button');
                     const clearButton = document.getElementById('clear-button');
                     const messagesContainer = document.querySelector('.messages');
+                    document.getElementById('model-select').value = '${this._currentModel}';
+                    const modelSelect = document.getElementById('model-select');
 
                     function sendMessage() {
                         if (messageInput.value.trim()) {
-                            vscode.postMessage({ type: 'sendMessage', message: messageInput.value });
+                            const selectedModel = modelSelect.value;
+                            vscode.postMessage({
+                                type: 'sendMessage',
+                                message: messageInput.value,
+                                model: selectedModel
+                            });
                             messageInput.value = '';
                         }
                     }
+
+                    modelSelect.addEventListener('change', () => {
+                        vscode.postMessage({ type: 'modelSelected', model: modelSelect.value });
+                    });
 
                     sendButton.addEventListener('click', sendMessage);
 
