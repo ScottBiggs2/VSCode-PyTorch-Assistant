@@ -7,12 +7,12 @@ import json
 import tempfile
 import subprocess
 import traceback
-
 # from langchain_community.llms import Ollama
 from langchain_ollama import OllamaLLM
 from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain.prompts import PromptTemplate
 from langchain_community.utilities import WikipediaAPIWrapper
+from langchain_mistralai import ChatMistralAI
 
 load_dotenv()
 
@@ -20,25 +20,41 @@ MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY") # Placeholder for future use
 
 class PyTorchAssistant:
-    def __init__(self):
-        # Initialize with updated Ollama import
-        # [https://python.langchain.com/api_reference/ollama/llms/langchain_ollama.llms.OllamaLLM.html]
-
-        # Upgrades while keeping models small
-        self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=True)
-        self.coder = OllamaLLM(model="deepseek-r1:1.5b", reasoning=True)
-        # self.critic = OllamaLLM(model="qwen3:1.7b", reasoning=True)
+    def __init__(self, model: str = "local"):
+        if model == "local":
+            # Upgrades while keeping models small
+            self.orchestrator = OllamaLLM(model="qwen3:1.7b", reasoning=True)
+            self.coder = OllamaLLM(model="deepseek-r1:1.5b", reasoning=True)
+            # self.critic = OllamaLLM(model="qwen3:1.7b", reasoning=True)
+        elif model == "codestral":
+            if not MISTRAL_API_KEY:
+                raise ValueError("MISTRAL_API_KEY not found in .env file. Please add it to use Codestral.")
+            
+            codestral_llm = ChatMistralAI(
+                model="codestral-latest",
+                endpoint="https://codestral.mistral.ai/v1",
+                api_key=MISTRAL_API_KEY,
+                temperature=0.0,
+                max_retries=2,
+            )
+            self.orchestrator = codestral_llm
+            self.coder = codestral_llm
+        elif model == "claude":
+            # TODO: Implement Claude call
+            raise NotImplementedError("Claude Sonnet 4 API support is not implemented yet.")
+        else:
+            raise ValueError(f"Unknown model selected: {model}")
 
         self.search_tool = Tool(
             name="Wikipedia Search",
             func=self.search_wikipedia,
-            description="Search Wikipedia for useful general knowledge"
+            description="Search Wikipedia for useful general knowledge about concepts, libraries, or algorithms."
         )
         
         self.code_tool = Tool(
             name="DeepSeek Coder",
             func=self.generate_code,
-            description="Generate and modify code based on user requests and context"
+            description="Generate or modify Python code based on a task specification and existing code context. Input must be a JSON string with 'task_specification' and 'code_context' keys. 'code_context' should be the full content of the file to modify."
         )
 
         self.test_code_tool = Tool(
@@ -47,11 +63,15 @@ class PyTorchAssistant:
             description="Test python code to check for errors and verify its output against an expected result. Input should be a JSON string with 'code' and 'expected_output' keys. The 'code' should be a complete runnable script. The 'expected_output' should be the exact string the script is expected to print to stdout."
         )
 
-        # self.code_review = Tool(
-        #     name="Code Review",
-        #     func= _________,
-        #     description="Review code to check underlying logic and goal alignment with user requests"
-        #)
+        tools = [self.search_tool, self.code_tool, self.test_code_tool]
+        self.agent = self.create_agent(tools)
+        self.agent_executor = AgentExecutor(
+            agent=self.agent, 
+            tools=tools, 
+            verbose=True, 
+            handle_parsing_errors=True, # Important for robustness
+            max_iterations=10
+        )
 
         # self.break_down_code = Tool(
         #     name="Break Down Code",
@@ -73,34 +93,14 @@ class PyTorchAssistant:
 
         # MCP integration here? - if we go with cloud connection
 
-        self.agent = self.create_agent()
-
-    def create_agent(self):
+    def create_agent(self, tools):
         """Create agent with proper prompt template including tool_names"""
-        tools = [self.search_tool, self.code_tool, self.test_code_tool]
         
         prompt_template = PromptTemplate.from_template("""
-        You are PyTorchMaster, an expert AI assistant for PyTorch development.
-        When writing or modifying code, you should test it with the `test_code` tool to ensure it works correctly before providing the final answer.
-        Use these tools when needed:
+You are PyTorchMaster, an expert AI assistant specializing in PyTorch development. Your goal is to help users by answering questions, explaining concepts, and modifying their code.
+
+You have access to the following tools:
         {tools}
-        
-        Tools:
-        {tool_names}
-        
-        Follow this format:
-        Question: the input question
-        Thought: I need to write some code. I should also think about how to test it to verify the result.
-        Action: the action to take (one of: {tool_names})
-        Action Input: the input to the action
-        Observation: the result of the action
-        Thought: I can now test the generated code. I'll write a simple test case.
-        Action: test_code
-        Action Input: {{"code": "import torch\\n\\n# ... code to test ...\\n\\nprint(result)", "expected_output": "expected result"}}
-        Observation: The test passed/failed.
-        ... (if the test fails, repeat the cycle of Thought, Action (DeepSeek Coder), Observation, Action (test_code), Observation until the test passes)
-        Thought: I now know the final answer
-        Final Answer: the final answer
         
         Current conversation:
         {history}
@@ -130,7 +130,8 @@ class PyTorchAssistant:
         Output format:
         REFINED_REQUEST: Clear technical specification
         CONTEXT_NOTES: Relevant implementation details"""
-        return self.orchestrator.invoke(prompt)
+        response = self.orchestrator.invoke(prompt)
+        return response.content if hasattr(response, 'content') else response
     
     def generate_code(self, refined_prompt: str, code: str) -> str:
         # Updated prompt to request the full, modified file content
@@ -151,7 +152,8 @@ class PyTorchAssistant:
 - Example: ```python\\n# all the modified code here...\\n```
 - If no changes are needed, return the original code.
 """
-        return self.coder.invoke(prompt)
+        response = self.coder.invoke(prompt)
+        return response.content if hasattr(response, 'content') else response
     
     def test_code_func(self, input_str: str) -> str:
         """
@@ -226,11 +228,11 @@ class PyTorchAssistant:
             
             code_context = "\n\n---\n\n".join(code_context_parts)
 
-            # Unified prompt for both explanation and code generation
+            # Unified prompt for direct explanation and code modification.
+            # This is NOT an agentic call, so we don't ask it to use tools.
             prompt = f"""
-You are an expert Python and PyTorch programmer providing an explanation.
+You are an expert Python and PyTorch programmer. Your task is to provide a clear explanation and, if necessary, code modifications based on the user's request and the provided code context.
 
-You can use the DeepSeek code tool to generate code changes.
 ### User Request:
 {user_input}
 
@@ -238,14 +240,15 @@ You can use the DeepSeek code tool to generate code changes.
 {code_context}
 
 ### Instructions:
-1.  Provide a clear and detailed explanation that answers the user's request. Use markdown for formatting.
-2.  Use the search tool to find any relevant documentation for this request.
-2.  Include small, illustrative code snippets in your explanation where necessary, using ````python` blocks.
-3.  **If your explanation suggests specific changes to the user's code, provide the complete, modified code for each changed file at the end of your response. Each file's content must be inside a separate code block, marked with ````python:apply:path/to/your/file.py`.**
-4.  If only one file is changed, use one block. If multiple files are changed, use multiple blocks.
-5.  If no changes are suggested, do not include any ````python:apply` blocks.
+1.  Provide a clear and detailed explanation that directly answers the user's request. Use markdown for formatting.
+2.  If the request requires external knowledge (e.g., specific PyTorch functions, concepts), incorporate that information into your explanation as if you have looked it up.
+3.  Include small, illustrative code snippets in your explanation where necessary, using ````python` blocks.
+4.  **If your explanation suggests specific changes to the user's code, provide the complete, modified code for each changed file at the end of your response. Each file's content must be inside a separate code block, marked with ````python:apply:path/to/your/file.py`.**
+5.  If only one file is changed, use one block. If multiple files are changed, use multiple blocks.
+6.  If no changes are suggested, do not include any ````python:apply` blocks.
 """
-            response_text = self.orchestrator.invoke(prompt)
+            response = self.orchestrator.invoke(prompt)
+            response_text = response.content if hasattr(response, 'content') else response
 
             # New logic to find all apply blocks with file paths
             apply_pattern = r'```python:apply:(.*?)\n(.*?)\n```'
@@ -323,48 +326,27 @@ def analyze_file(file_path: str) -> str:
     return "No PyTorch issues found"
 
 
-# Initialize assistant with error handling
-try:
-    assistant = PyTorchAssistant()
-except Exception as e:
-    print(f"Failed to initialize PyTorchAssistant: {str(e)}")
-    assistant = None
+# Cache for assistant instances
+_assistant_instances = {}
+
+def get_assistant(model: str) -> PyTorchAssistant:
+    """Gets a cached or new instance of PyTorchAssistant for the given model."""
+    if model not in _assistant_instances:
+        _assistant_instances[model] = PyTorchAssistant(model=model)
+    return _assistant_instances[model]
 
 def handle_chat_request(user_input: str, files: list, model: str = "local") -> str:
     """Main entry point with error handling"""
-    if not assistant:
-        return json.dumps({"type": "error", "content": "Assistant initialization failed"})
-    
-    if model == "local":
+    try:
+        assistant = get_assistant(model)
         return assistant.handle_chat_request(user_input, files)
-    elif model == "codestral":
-        if not MISTRAL_API_KEY:
-            return json.dumps({"type": "error", "content": "MISTRAL_API_KEY not found in .env file. Please add it to use Codestral."})
-        try:
-            from langchain_mistralai import ChatMistralAI
-
-            llm = ChatMistralAI(
-                model="codestral-latest",
-                endpoint="https://codestral.mistral.ai/v1",
-                api_key=MISTRAL_API_KEY,
-                temperature=0.0,
-                max_retries=2,
-            )
-
-            prompt = f"""You are an expert Python and PyTorch programmer.\n ### User Request: \n{user_input}"""
-
-            response_text = llm.invoke(prompt).content
-            return json.dumps({"type": "explanation", "content": response_text})
-
-        except Exception as e:
-            traceback_str = ''.join(traceback.format_exception(None, e, e.__traceback__))
-            return json.dumps({"type": "error", "content": f"Error during Codestral API call: {str(e)} \n Traceback: {traceback_str}"})
-
-    elif model == "claude":
-        # TODO: Implement Claude call
-        return json.dumps({"type": "explanation", "content": f"Claude Sonnet 4 API support is not implemented yet."})
-    else:
-        return json.dumps({"type": "error", "content": f"Unknown model selected: {model}"})
+    except (ValueError, NotImplementedError) as e:
+        return json.dumps({"type": "error", "content": str(e)})
+    except Exception as e:
+        # For Codestral or other API errors, provide more context
+        traceback_str = ''.join(traceback.format_exception(None, e, e.__traceback__))
+        error_message = f"An error occurred with the '{model}' model: {str(e)}\nTraceback: {traceback_str}"
+        return json.dumps({"type": "error", "content": error_message})
 
 if __name__ == '__main__':
     # This script now reads from stdin for chat requests
